@@ -288,8 +288,7 @@ if __name__ == "__main__":
         # data_path=os.path.join(os.getcwd(), "dataset"),
         data_path="/home/mx6835/Academic/dataset4all/FAMO/QM9",
         lr=1e-3,
-        n_epochs=2,
-        # change the batch size from 120 to 240
+        n_epochs=300,
         batch_size=120,
         method="nashmtl",
     )

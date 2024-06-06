@@ -322,8 +322,8 @@ if __name__ == "__main__":
     parser.set_defaults(
         data_path=os.path.join(os.getcwd(), "dataset"),
         lr=1e-4,
-        n_epochs=2,
-        batch_size=2,
+        n_epochs=200,
+        batch_size=8,
     )
     parser.add_argument(
         "--model",
