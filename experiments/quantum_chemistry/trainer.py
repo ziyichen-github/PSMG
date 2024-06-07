@@ -285,8 +285,7 @@ if __name__ == "__main__":
     _ = torch.cuda.empty_cache()
     parser = ArgumentParser("QM9", parents=[common_parser])
     parser.set_defaults(
-        # data_path=os.path.join(os.getcwd(), "dataset"),
-        data_path="/home/mx6835/Academic/dataset4all/FAMO/QM9",
+        data_path=os.path.join(os.getcwd(), "dataset"),
         lr=1e-3,
         n_epochs=300,
         batch_size=120,

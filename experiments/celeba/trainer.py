@@ -14,7 +14,7 @@ from argparse import ArgumentParser
 
 import numpy as np
 import time
-# import tqdm
+import os
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -164,8 +164,7 @@ def main(path, lr, bs, device):
 if __name__ == "__main__":
     parser = ArgumentParser("Celeba", parents=[common_parser])
     parser.set_defaults(
-        # data_path=os.path.join(os.getcwd(), "dataset"),
-        data_path="/home/mx6835/Academic/MM1204/unitary-scalarization-dmtl/data/celeba",
+        data_path=os.path.join(os.getcwd(), "dataset"),
         lr=3e-4,
         n_epochs=15,
         batch_size=256,
