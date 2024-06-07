@@ -1,4 +1,4 @@
-# PSMGD: Periodic Stochastic Multi-Gradient Descent for Fast Multi-Objective Optimization
+# PSMGD
 
 Official implementation of *PSMGD: Periodic Stochastic Multi-Gradient Descent for Fast Multi-Objective Optimization*.
 
