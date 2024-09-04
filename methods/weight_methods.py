@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from scipy.optimize import minimize, least_squares
 
 from methods.min_norm_solvers import MinNormSolver, gradient_normalizers
+from methods.abstract_weighting import AbsWeighting
 
 EPS = 1e-8  # for numerical stability
 
@@ -1562,6 +1563,84 @@ class SDMGrad(WeightMethod):
             torch.nn.utils.clip_grad_norm_(shared_parameters, self.max_norm)
         # NOTE: to align with all other weight methods
         return None, {"GTG": GTG}
+
+
+class STCH(AbsWeighting):
+    """
+    Smooth Tchebycheff Scalarization Method for Multi-Objective Optimization.
+    """
+
+    def __init__(self, mu=0.1, warmup_epoch=10):
+        """
+        Initializes the STCH class with the required parameters.
+
+        Parameters
+        ----------
+        mu : float
+            Smoothing parameter for the STCH scalarization (default: 0.1).
+        warmup_epoch : int
+            Number of epochs used to warm up before computing the nadir vector (default: 10).
+        """
+        super(STCH, self).__init__()
+        self.mu = mu
+        self.warmup_epoch = warmup_epoch
+
+        # Initialize parameters related to STCH computation
+        self.step = 0
+        self.nadir_vector = None
+        self.average_loss = 0.0
+        self.average_loss_count = 0
+        self.epoch = 0  # This needs to be managed externally as part of the training process
+
+    def backward(self, losses):
+        """
+        Computes the backward pass for the STCH method.
+
+        Parameters
+        ----------
+        losses : torch.Tensor
+            A tensor of losses for each task.
+        """
+        self.step += 1
+        batch_weight = np.ones(len(losses))
+
+        # Before reaching warm-up epoch, compute the log-sum of the losses
+        if self.epoch < self.warmup_epoch:
+            loss = torch.mul(torch.log(losses + 1e-20),
+                             torch.ones_like(losses)).sum()
+            loss.backward()
+            return batch_weight
+
+        # At the warm-up epoch, compute the average loss to set up the nadir vector
+        elif self.epoch == self.warmup_epoch:
+            loss = torch.mul(torch.log(losses + 1e-20),
+                             torch.ones_like(losses)).sum()
+            self.average_loss += losses.detach()
+            self.average_loss_count += 1
+
+            loss.backward()
+            return batch_weight
+
+        # After the warm-up epoch, apply the Smooth Tchebycheff Scalarization
+        else:
+            # Initialize the nadir vector after the warm-up phase
+            if self.nadir_vector is None:
+                self.nadir_vector = self.average_loss / self.average_loss_count
+                print(f"Initialized Nadir Vector: {self.nadir_vector}")
+
+            # Compute the loss terms adjusted by the nadir vector
+            losses = torch.log(losses / self.nadir_vector + 1e-20)
+            max_term = torch.max(losses.data).detach()
+            reg_losses = losses - max_term
+
+            # Apply the smooth Tchebycheff scalarization formula
+            scalarized_loss = self.mu * \
+                torch.log(torch.sum(torch.exp(reg_losses / self.mu)))
+
+            # Perform backpropagation on the scalarized loss
+            scalarized_loss.backward()
+
+            return batch_weight
 
 
 class WeightMethods:

@@ -38,3 +38,12 @@ The dataset by default should be put under `experiments/EXP_NAME/dataset/` folde
 cd experiments/EXP_NAME
 sh run.sh
 ```
+
+### Updates
+
+- Added support for [STCH](https://github.com/Xi-L/STCH/tree/main)
+
+### Performance Visualization
+
+![Test loss in training (300 epochs) on QM-9](./docs/images/QM9_loss.png)
+*Test loss in training (300 epochs) on QM-9*
