@@ -1,5 +1,6 @@
 mkdir -p ./save
 mkdir -p ./trainlogs
+mkdir -p ./trainlogs/losses
 
 # method=sdmgrad
 seed=42

@@ -154,7 +154,7 @@ def main(path, lr, bs, device):
 
         torch.save({"metric": metrics, "best_epoch": best_epoch},
                    f"./save/{name}.stats")
-    txt_name = f"/home/mx6835/Academic/MM1204/FAMO/experiments/celeba/trainlogs/losses/{name}.txt"
+    txt_name = os.path.join(os.getcwd(), f"trainlogs/losses/{name}.txt")
     with open(txt_name, 'w') as file:
         for value in epoch_values:
             file.write(str(value) + '\n')
