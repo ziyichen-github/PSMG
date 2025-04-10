@@ -72,9 +72,10 @@ class NYUv2(Dataset):
 
         # read the data file
         if train:
-            self.data_path = "/home/mx6835/Academic/MM1204/UniversalRepresentations/DensePred/data/nyuv2" + "/train"
+            self.data_path = os.path.join(self.root, "nyuv2/train")
+            
         else:
-            self.data_path = "/home/mx6835/Academic/MM1204/UniversalRepresentations/DensePred/data/nyuv2" + "/val"
+            self.data_path = os.path.join(self.root, "nyuv2/val")
 
         # calculate data length
         self.data_len = len(

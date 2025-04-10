@@ -381,7 +381,7 @@ def main(path, lr, bs, device):
                 "avg_cost": avg_cost,
                 "losses": loss_list,
             }, f"./save/{name}.stats")
-    txt_name = f"/home/mx6835/Academic/MM1204/FAMO/experiments/nyuv2/trainlogs/losses/{name}.txt"
+    txt_name = os.path.join(os.getcwd(), f"trainlogs/losses/{name}.txt")
     with open(txt_name, 'w') as file:
         for value in epoch_values:
             file.write(value + '\n')
