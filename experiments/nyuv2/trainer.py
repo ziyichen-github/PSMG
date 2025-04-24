@@ -78,9 +78,6 @@ def main(path, lr, bs, device):
     train_loader = torch.utils.data.DataLoader(
         dataset=nyuv2_train_set, batch_size=bs, shuffle=True
     )
-    train_aux_loader = torch.utils.data.DataLoader(
-        dataset=nyuv2_train_set, batch_size=bs, shuffle=True
-    )
     test_loader = torch.utils.data.DataLoader(
         dataset=nyuv2_test_set, batch_size=bs, shuffle=False
     )
@@ -138,53 +135,14 @@ def main(path, lr, bs, device):
 
             train_pred, features = model(
                 train_data, return_representation=True)
-
-            if "sdmgrad" in args.method:
-                aux_batch1 = next(iter(train_aux_loader))
-                train_aux_data1, train_aux_label1, train_aux_depth1, train_aux_normal1 = aux_batch1
-                train_aux_data1, train_aux_label1 = train_aux_data1.to(
-                    device), train_aux_label1.long().to(device)
-                train_aux_depth1, train_aux_normal1 = train_aux_depth1.to(
-                    device), train_aux_normal1.to(device)
-                train_aux_pred1, aux_features1 = model(
-                    train_aux_data1, return_representation=True)
-
-                aux_batch2 = next(iter(train_aux_loader))
-                train_aux_data2, train_aux_label2, train_aux_depth2, train_aux_normal2 = aux_batch2
-                train_aux_data2, train_aux_label2 = train_aux_data2.to(
-                    device), train_aux_label2.long().to(device)
-                train_aux_depth2, train_aux_normal2 = train_aux_depth2.to(
-                    device), train_aux_normal2.to(device)
-                train_aux_pred2, aux_features2 = model(
-                    train_aux_data2, return_representation=True)
-
-                losses = torch.stack(
-                    (
-                        calc_loss(train_pred[0], train_label, "semantic"),
-                        calc_loss(train_pred[1], train_depth, "depth"),
-                        calc_loss(train_pred[2], train_normal, "normal"),
-                        calc_loss(train_aux_pred1[0],
-                                  train_aux_label1, "semantic"),
-                        calc_loss(train_aux_pred1[1],
-                                  train_aux_depth1, "depth"),
-                        calc_loss(train_aux_pred1[2],
-                                  train_aux_normal1, "normal"),
-                        calc_loss(train_aux_pred2[0],
-                                  train_aux_label2, "semantic"),
-                        calc_loss(train_aux_pred2[1],
-                                  train_aux_depth2, "depth"),
-                        calc_loss(train_aux_pred2[2],
-                                  train_aux_normal2, "normal"),
-                    )
+            
+            losses = torch.stack(
+                (
+                    calc_loss(train_pred[0], train_label, "semantic"),
+                    calc_loss(train_pred[1], train_depth, "depth"),
+                    calc_loss(train_pred[2], train_normal, "normal"),
                 )
-            else:
-                losses = torch.stack(
-                    (
-                        calc_loss(train_pred[0], train_label, "semantic"),
-                        calc_loss(train_pred[1], train_depth, "depth"),
-                        calc_loss(train_pred[2], train_normal, "normal"),
-                    )
-                )
+            )
 
             loss, extra_outputs = weight_method.backward(
                 losses=losses,
@@ -198,18 +156,6 @@ def main(path, lr, bs, device):
             # for record intermediate statistics
             loss_list.append(losses.detach().cpu())
             optimizer.step()
-            # if "famo" in args.method:
-            if args.method in ["famo", "pmgdn", "pmgdnlog"]:
-                with torch.no_grad():
-                    train_pred = model(train_data, return_representation=False)
-                    new_losses = torch.stack(
-                        (
-                            calc_loss(train_pred[0], train_label, "semantic"),
-                            calc_loss(train_pred[1], train_depth, "depth"),
-                            calc_loss(train_pred[2], train_normal, "normal"),
-                        )
-                    )
-                    weight_method.method.update(new_losses.detach())
 
             # accumulate label prediction for every pixel in training images
             conf_mat.update(train_pred[0].argmax(
@@ -367,13 +313,7 @@ def main(path, lr, bs, device):
                 "Test Loss <30"
             ]
 
-            # if "famo" in args.method:
-            if args.method in ["famo", "pmgdn", "pmgdnlog"]:
-                name = f"{args.method}_gamma{args.gamma}_sd{args.seed}_lr{args.lr}_bs{args.batch_size}_{timestamp}"
-            elif "fairgrad" in args.method:
-                name = f"{args.method}_alpha{args.alpha}_sd{args.seed}_{timestamp}"
-            else:
-                name = f"{args.method}_sd{args.seed}_lr{args.lr}_bs{args.batch_size}_{timestamp}"
+            name = f"{args.method}_sd{args.seed}_lr{args.lr}_bs{args.batch_size}_{timestamp}"
 
             torch.save({
                 "delta_m": deltas,
