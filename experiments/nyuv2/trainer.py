@@ -155,7 +155,12 @@ def main(path, lr, bs, device):
 
             # for record intermediate statistics
             loss_list.append(losses.detach().cpu())
-            optimizer.step()
+
+            # Replace optimizer.step() with manual parameter updates
+            with torch.no_grad():
+                for param in model.parameters():
+                    param -= args.lr * param.grad
+                    param.zero_grad()
 
             # accumulate label prediction for every pixel in training images
             conf_mat.update(train_pred[0].argmax(
