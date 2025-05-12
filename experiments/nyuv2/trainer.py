@@ -16,13 +16,15 @@ import wandb
 from argparse import ArgumentParser
 import numpy as np
 import torch
+torch.set_num_threads(1)
 import time
 import datetime
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
 from tqdm import trange
 import networkx as nx
-_ = torch.cuda.empty_cache()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
 
 set_logger()
 
@@ -53,16 +55,11 @@ def calc_loss(x_pred, x_output, task_type):
     return loss
 
 def main(path, lr, bs, device):
-
+    # Algorithm parameters
     num_agents = args.num_agents
     network_sparsity = args.network_sparsity
-
-    # Parameter validation
-    if not 0 <= network_sparsity <= 1:
-        raise ValueError("Network sparsity must be between 0 and 1")
-    if num_agents < 1:
-        raise ValueError("Number of agents must be at least 1")
-
+    alpha = 0.9  # Weight smoothing factor
+    
     # Generate communication matrix W
     G = nx.erdos_renyi_graph(
         num_agents,
@@ -100,7 +97,8 @@ def main(path, lr, bs, device):
             subset,
             batch_size=bs,
             shuffle=True,
-            generator=torch.Generator().manual_seed(args.seed + i)
+            generator=torch.Generator().manual_seed(args.seed + i),
+            num_workers=0
         )
         for i, subset in enumerate(train_subsets)
     ]
@@ -116,10 +114,9 @@ def main(path, lr, bs, device):
     )
 
     test_loaders = [
-        DataLoader(subset, batch_size=bs, shuffle=False)
+        DataLoader(subset, batch_size=bs, shuffle=False, num_workers=0)
         for subset in test_subsets
     ]
-
     # Initialize models and optimizers for each agent
     models = [SegNetMtan().to(device) for _ in range(num_agents)]
     
@@ -129,56 +126,39 @@ def main(path, lr, bs, device):
         WeightMethods(args.method, n_tasks=3, device=device, **weight_methods_parameters[args.method])
         for _ in range(num_agents)
     ]
-    optimizers = [
-        torch.optim.Adam([
-            {"params": model.parameters(), "lr": lr},
-            {"params": wm.parameters(), "lr": args.method_params_lr}
-        ])
-        for model, wm in zip(models, weight_methods)
-    ]
+    prev_weights = [None for _ in range(num_agents)]  # For weight smoothing
 
     # Training Loop
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizers[0], step_size=100, gamma=0.5)
     epochs = args.n_epochs
     epoch_iter = trange(epochs)
     avg_cost = np.zeros([epochs, 24], dtype=np.float32)
-    conf_mat = ConfMatrix(models[0].segnet.class_nb)
-    custom_step = -1
     deltas = np.zeros([epochs,], dtype=np.float32)
 
     # some extra statistics we save during training
     loss_list = []
     epoch_values = []
     # Get the current time
-    now = datetime.datetime.now()
-    # Format the time as hhmmss
-    timestamp = now.strftime("%H%M%S")
+    timestamp = datetime.datetime.now().strftime("%H%M%S")
 
     for epoch in epoch_iter:
-        t0 = time.time()
         cost = np.zeros(24, dtype=np.float32)
         train_conf_mat = ConfMatrix(models[0].segnet.class_nb)
 
-        # Multi-agent training phase
         for batches in zip(*train_loaders):
-            custom_step += 1
-            all_gradients = []
-            batch_losses = []
+            # 1. Compute losses and gradients for each agent
+            all_grads = {s: [] for s in range(3)}
+            current_params = [None] * num_agents
 
-            # Compute gradients for each agent
-            for agent_id, (model, weight_method, optimizer, batch) in enumerate(zip(models, weight_methods, optimizers, batches)):
+            for agent_id, (model, batch) in enumerate(zip(models, batches)):
+                # Forward pass and loss computation
                 train_data, train_label, train_depth, train_normal = batch
-                train_data, train_label = train_data.to(device), train_label.long().to(
-                    device
-                )
-                train_depth, train_normal = train_depth.to(
-                    device), train_normal.to(device)
-                
-                optimizer.zero_grad()
+                train_data = train_data.to(device)
+                train_label = train_label.long().to(device)
+                train_depth = train_depth.to(device)
+                train_normal = train_normal.to(device)
 
-                # Forward pass
-                train_pred, features = model(
-                    train_data, return_representation=True)
+                model.zero_grad()
+                train_pred, features = model(train_data, return_representation=True)
                 losses = torch.stack(
                     (
                         calc_loss(train_pred[0], train_label, "semantic"),
@@ -186,23 +166,20 @@ def main(path, lr, bs, device):
                         calc_loss(train_pred[2], train_normal, "normal"),
                     )
                 )
-                batch_losses.append(losses.detach().cpu().numpy())
+                logging.info(f'agent: {agent_id}, losses: {losses}')
+                loss_list.append(losses.detach().cpu())
 
-                # Compute weighted loss
-                loss, extra_outputs = weight_method.backward(
-                    losses=losses,
-                    shared_parameters=list(model.shared_parameters()),
-                    task_specific_parameters=list(
-                        model.task_specific_parameters()),
-                    last_shared_parameters=list(model.last_shared_parameters()),
-                    representation=features,
-                )
-                loss.backward(retain_graph=True) 
+                # Compute gradients for each task (retain graph for all)
+                task_grads = []
+                for s in range(3):
+                    model.zero_grad()
+                    losses[s].backward(retain_graph=True)  # Retain graph for all tasks
+                    task_grads.append([p.grad.clone() for p in model.parameters()])
 
-                # Store gradients
-                gradients = [param.grad.clone() for param in model.parameters()]
-                all_gradients.append(gradients)
-                model.zero_grad()
+                # Store gradients and parameters
+                for s in range(3):
+                    all_grads[s].append(task_grads[s])
+                current_params[agent_id] = [p.detach().clone() for p in model.parameters()]
 
                 # Update training metrics
                 train_conf_mat.update(train_pred[0].argmax(1).flatten(), train_label.flatten())
@@ -214,34 +191,76 @@ def main(path, lr, bs, device):
                 normal_err = normal_error(train_pred[2], train_normal)
                 for i, val in enumerate(normal_err):
                     cost[7 + i] += val / (len(train_loaders[0]) * num_agents)
+            logging.info(f'all_grads: {len(all_grads)}, {len(all_grads[0])}, {len(all_grads[0][0])}')
+            # 2. Aggregate gradients using communication matrix W
+            aggregated_grads = {s: [] for s in range(3)}
+            for s in range(3):
+                num_agents = len(all_grads[s])
+                num_params = len(all_grads[s][0])  # Parameters per agent
+                
+                for param_idx in range(num_params):
+                    # Stack gradients for this parameter across agents: [num_agents, ...]
+                    agent_grads = [all_grads[s][agent_id][param_idx] for agent_id in range(num_agents)]
+                    param_stack = torch.stack(agent_grads, dim=0)
+                    
+                    # Aggregate: W_tensor [num_agents, num_agents] @ param_stack [num_agents, ...]
+                    aggregated = torch.einsum('ij,j...->i...', W_tensor, param_stack)
+                    aggregated_grads[s].append(aggregated)
+            logging.info(f'aggregated_grads: {len(aggregated_grads)}, {len(aggregated_grads[0])}, {len(aggregated_grads[0][0])}')
+            # 3. Compute λ and update parameters for each agent
+            for agent_id in range(num_agents):
+                model = models[agent_id]
+                weight_method = weight_methods[agent_id]
+                params = list(model.parameters())
+                
+                # Prepare agent-specific aggregated gradients
+                agent_grads = []
+                for s in range(3):
+                    agent_grads.append([
+                        aggregated_grads[s][p_idx][agent_id] 
+                        for p_idx in range(len(params))
+                    ])
+                
+                # Assign aggregated gradients to model
+                with torch.no_grad():
+                    for p_idx, param in enumerate(model.parameters()):
+                        param.grad = sum(agent_grads[s][p_idx] for s in range(3))
+                
+                # Compute λ using PMGD with actual losses
+                _, extra = weight_method.backward(
+                    losses=losses,
+                    shared_parameters=model.shared_parameters(),
+                    task_specific_parameters=model.task_specific_parameters(),
+                    last_shared_parameters=model.last_shared_parameters(),
+                    representation=features
+                )
+                logging.info('complete Computing λ')
+                weights = extra['weights']
+                
+                # Apply weight smoothing
+                if prev_weights[agent_id] is not None:
+                    weights = (1 - alpha) * weights + alpha * prev_weights[agent_id]
+                prev_weights[agent_id] = weights.detach().clone()
 
-            #  Gradient aggregation using matrix W
-            aggregated_grads = []
-            for param_grads in zip(*all_gradients):
-                stacked_grads = torch.stack(param_grads)
-                aggregated = torch.einsum('ij,j...->i...', W_tensor, stacked_grads)
-                aggregated_grads.append(aggregated)
-
-            # Manual parameter update
-            learning_rate = lr  # Use learning rate from args
-            for agent_id, model in enumerate(models):
-                for param, aggr_grad in zip(model.parameters(), aggregated_grads):
-                    param.data -= learning_rate * aggr_grad[agent_id]
-            # Store batch losses
-            loss_list.extend(batch_losses)
+                # 4. Compute directional gradient (weighted sum)
+                d_t = []
+                for p_idx in range(len(model.parameters())):
+                    weighted_grad = torch.zeros_like(model.parameters()[p_idx])
+                    for s in range(3):
+                        weighted_grad += weights[s] * agent_grads[s][p_idx]
+                    d_t.append(weighted_grad)
+                
+                # 5. Update parameters (consensus + gradient step)
+                with torch.no_grad():
+                    all_params = torch.stack([torch.stack([p.detach() for p in m.parameters()]) for m in models])
+                    consensus_params = torch.einsum('ij,j...->i...', W_tensor, all_params)
+                    for p_idx, param in enumerate(model.parameters()):
+                        param.data = consensus_params[agent_id, p_idx] - lr * d_t[p_idx] 
 
         # Update training metrics
         avg_cost[epoch, :12] = cost[:12]
         avg_cost[epoch, 1:3] = train_conf_mat.get_metrics()
-
-        # Parameter consensus after each epoch
-        all_params = [list(model.parameters()) for model in models]
-        for param_idx in range(len(all_params[0])):
-            params = torch.stack([model_params[param_idx].data for model_params in all_params])
-            aggr_params = torch.einsum('ij,j...->i...', W_tensor, params)
-            for agent_id, model in enumerate(models):
-                list(model.parameters())[param_idx].data.copy_(aggr_params[agent_id])
-
+        
         # Testing Phase
         test_conf_mat = ConfMatrix(models[0].segnet.class_nb)
         test_cost = np.zeros(12, dtype=np.float32)  # Only test metrics (indices 12-23)        
@@ -379,8 +398,6 @@ def main(path, lr, bs, device):
             "losses": loss_list,
         }, f"./save/{name}.stats")
 
-        scheduler.step()
-
     txt_name = os.path.join(os.getcwd(), f"trainlogs/losses/{name}.txt")
     with open(txt_name, 'w') as file:
         for value in epoch_values:
@@ -388,17 +405,16 @@ def main(path, lr, bs, device):
 
 if __name__ == "__main__":
     parser = ArgumentParser("NYUv2", parents=[common_parser])
+    parser.add_argument("--batch_size", type=int, default=2,
+                      help="Batch Size")    
     parser.add_argument("--num_agents", type=int, default=5,
                       help="Number of collaborative agents")
     parser.add_argument("--network_sparsity", type=float, default=0.5,
                       help="Sparsity level of communication network (0-1)")
-    
-    # Original arguments
     parser.set_defaults(
-        data_path=os.path.join(os.getcwd(), "dataset"),
+        data_path=os.path.join(os.getcwd(), "dataset_test"),
         lr=1e-4,
         n_epochs=2,
-        batch_size=2,
     )
     parser.add_argument(
         "--model",
@@ -421,7 +437,7 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project,
                    entity=args.wandb_entity, config=args)
 
-    device = get_device(gpus=args.gpu)
+    device = "cpu"
     main(path=args.data_path, lr=args.lr, bs=args.batch_size, device=device)
 
     if wandb.run is not None:

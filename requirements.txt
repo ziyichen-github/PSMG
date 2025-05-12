@@ -8,3 +8,4 @@ seaborn
 wandb==0.12.21
 plotly
 torch_geometric
+networkx
