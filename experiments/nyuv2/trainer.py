@@ -16,7 +16,7 @@ import wandb
 from argparse import ArgumentParser
 import numpy as np
 import torch
-torch.set_num_threads(1)
+torch.set_num_threads(4)
 import time
 import datetime
 import torch.nn.functional as F
@@ -98,7 +98,7 @@ def main(path, lr, bs, device):
             batch_size=bs,
             shuffle=True,
             generator=torch.Generator().manual_seed(args.seed + i),
-            num_workers=0
+            num_workers=4
         )
         for i, subset in enumerate(train_subsets)
     ]
@@ -114,7 +114,7 @@ def main(path, lr, bs, device):
     )
 
     test_loaders = [
-        DataLoader(subset, batch_size=bs, shuffle=False, num_workers=0)
+        DataLoader(subset, batch_size=bs, shuffle=False, num_workers=4)
         for subset in test_subsets
     ]
     # Initialize models and optimizers for each agent
@@ -407,8 +407,6 @@ if __name__ == "__main__":
     parser = ArgumentParser("NYUv2", parents=[common_parser])
     parser.set_defaults(
         data_path=os.path.join(os.getcwd(), "dataset"),
-        lr=1e-4,
-        n_epochs=200,
     )
     parser.add_argument(
         "--model",
@@ -417,6 +415,10 @@ if __name__ == "__main__":
         choices=["segnet", "mtan"],
         help="model type",
     )
+    parser.add_argument("--n_epochs", type=int, default=200,
+                      help="number of epoch")     
+    parser.add_argument("--lr", type=float, default=1e-4,
+                      help="learning rate")   
     parser.add_argument("--batch_size", type=int, default=2,
                       help="Batch Size")    
     parser.add_argument("--num_agents", type=int, default=5,
@@ -437,7 +439,7 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project,
                    entity=args.wandb_entity, config=args)
 
-    device = "cpu"
+    device = device = "cuda" if torch.cuda.is_available() else "cpu"
     main(path=args.data_path, lr=args.lr, bs=args.batch_size, device=device)
 
     if wandb.run is not None:
