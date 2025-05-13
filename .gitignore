@@ -5,6 +5,7 @@ experiments/celeba/dataset
 experiments/nyuv2/trainlogs
 experiments/nyuv2/save
 experiments/nyuv2/dataset
+experiments/nyuv2/dataset_test
 
 experiments/quantum_chemistry/trainlogs
 experiments/quantum_chemistry/save
