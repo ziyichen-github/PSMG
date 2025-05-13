@@ -5,8 +5,9 @@ mkdir -p ./trainlogs/losses
 method=pmgd
 seed=42
 gamma=0.001
+batch_size=5
 
-python trainer.py --method=$method --seed=$seed --gamma=$gamma > trainlogs/log_$method-gamma$gamma-$seed.log 2>&1 &
+python trainer.py --method=$method --seed=$seed --gamma=$gamma --batch_size=$batch_size > trainlogs/log_$method-gamma$gamma-$seed-$batch_size.log 2>&1
 # method=sdmgrad
 # seed=42
 # lamda=0.3

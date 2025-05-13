@@ -334,7 +334,6 @@ if __name__ == "__main__":
         data_path=os.path.join(os.getcwd(), "dataset"),
         lr=1e-4,
         n_epochs=200,
-        batch_size=2,
     )
     parser.add_argument(
         "--model",
@@ -343,6 +342,8 @@ if __name__ == "__main__":
         choices=["segnet", "mtan"],
         help="model type",
     )
+    parser.add_argument("--batch_size", type=int,
+                        default=2, help="batch size")    
     parser.add_argument(
         "--apply-augmentation", type=str2bool, default=True, help="data augmentations"
     )
