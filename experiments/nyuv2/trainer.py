@@ -190,7 +190,7 @@ def main(path, lr, bs, device):
                 normal_err = normal_error(train_pred[2], train_normal)
                 for i, val in enumerate(normal_err):
                     cost[7 + i] += val / (len(train_loaders[0]) * num_agents)
-            logging.info(f'all_grads: {len(all_grads)}, {len(all_grads[0])}, {len(all_grads[0][0])}')
+            # logging.info(f'all_grads: {len(all_grads)}, {len(all_grads[0])}, {len(all_grads[0][0])}')
             
             # 2. Aggregate gradients using communication matrix W
             aggregated_grads = []  # Shape: [num_agents][3 tasks][num_params]
@@ -204,7 +204,7 @@ def main(path, lr, bs, device):
             
             # Transpose to [num_agents][3 tasks][num_params]
             aggregated_grads = list(zip(*aggregated_grads))
-            logging.info(f'aggregated_grads: {len(aggregated_grads)}, {len(aggregated_grads[0])}, {len(aggregated_grads[0][0])}')
+            # logging.info(f'aggregated_grads: {len(aggregated_grads)}, {len(aggregated_grads[0])}, {len(aggregated_grads[0][0])}')
 
             # 3. Compute λ and update parameters for each agent
             all_final_weights = []
@@ -227,7 +227,7 @@ def main(path, lr, bs, device):
                 pmgd.prev_weights = current_weights
 
                 all_final_weights.append(final_weights)
-                logging.info(f'complete Computing λ: {final_weights}')
+                # logging.info(f'complete Computing λ: {final_weights}')
                 
             # 4. Compute ALL weighted gradients
             all_weighted_grads = []
@@ -406,9 +406,9 @@ def main(path, lr, bs, device):
 if __name__ == "__main__":
     parser = ArgumentParser("NYUv2", parents=[common_parser])
     parser.set_defaults(
-        data_path=os.path.join(os.getcwd(), "dataset_test"),
+        data_path=os.path.join(os.getcwd(), "dataset"),
         lr=1e-4,
-        n_epochs=2,
+        n_epochs=200,
     )
     parser.add_argument(
         "--model",
