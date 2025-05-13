@@ -183,22 +183,6 @@ class PMGD(WeightMethod):  # Just use sol in the backward, it should be used for
                       last=last_shared_parameters)[self.params]
         grads = {i: [torch.flatten(grad) for grad in torch.autograd.grad(
             loss, params, retain_graph=True)] for i, loss in enumerate(losses)}
-
-        # # copy
-        # # Compute gradients, allowing unused parameters and substituting zeros
-        # grads = {}
-        # for i, loss in enumerate(losses):
-        #     grad_params = torch.autograd.grad(
-        #         loss, params, retain_graph=True, allow_unused=True
-        #     )
-        #     grads_i = []
-        #     for param, g in zip(params, grad_params):
-        #         if g is None:
-        #             zero_grad = torch.zeros_like(param)
-        #             grads_i.append(zero_grad.flatten())
-        #         else:
-        #             grads_i.append(torch.flatten(g))
-        #     grads[i] = grads_i
         
         gn = gradient_normalizers(grads, losses, self.normalization)
         grads = {t: [g / gn[t] for g in grads[t]] for t in range(self.n_tasks)}

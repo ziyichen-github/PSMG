@@ -123,7 +123,7 @@ def main(path, lr, bs, device):
     weight_methods_parameters = extract_weight_method_parameters_from_args(
         args)
     weight_methods = [
-        WeightMethods(args.method, n_tasks=3, device=device, **weight_methods_parameters[args.method])
+        WeightMethods(args.method, n_tasks=3, device=device, pmgd_x=1, **weight_methods_parameters[args.method])
         for _ in range(num_agents)
     ]
     prev_weights = [None for _ in range(num_agents)]  # For weight smoothing
@@ -146,9 +146,9 @@ def main(path, lr, bs, device):
 
         for batches in zip(*train_loaders):
             # 1. Compute losses and gradients for each agent
-            all_grads = {s: [] for s in range(3)}
+            all_grads = []  # Shape: [num_agents][3 tasks][num_params]
             current_params = [None] * num_agents
-
+            all_losses = []
             for agent_id, (model, batch) in enumerate(zip(models, batches)):
                 # Forward pass and loss computation
                 train_data, train_label, train_depth, train_normal = batch
@@ -157,7 +157,6 @@ def main(path, lr, bs, device):
                 train_depth = train_depth.to(device)
                 train_normal = train_normal.to(device)
 
-                model.zero_grad()
                 train_pred, features = model(train_data, return_representation=True)
                 losses = torch.stack(
                     (
@@ -166,21 +165,21 @@ def main(path, lr, bs, device):
                         calc_loss(train_pred[2], train_normal, "normal"),
                     )
                 )
-                logging.info(f'agent: {agent_id}, losses: {losses}')
+                # logging.info(f'agent: {agent_id}, losses: {losses}')
                 loss_list.append(losses.detach().cpu())
+                all_losses.append(losses)
 
                 # Compute gradients for each task (retain graph for all)
                 task_grads = []
                 for s in range(3):
                     model.zero_grad()
                     losses[s].backward(retain_graph=True)  # Retain graph for all tasks
-                    task_grads.append([p.grad.clone() for p in model.parameters()])
+                    task_grads.append(torch.cat([p.grad.view(-1) for p in model.parameters()]).clone())
 
                 # Store gradients and parameters
-                for s in range(3):
-                    all_grads[s].append(task_grads[s])
+                all_grads.append(task_grads)
                 current_params[agent_id] = [p.detach().clone() for p in model.parameters()]
-
+                
                 # Update training metrics
                 train_conf_mat.update(train_pred[0].argmax(1).flatten(), train_label.flatten())
                 cost[0] += losses[0].item() / (len(train_loaders[0]) * num_agents)
@@ -192,70 +191,71 @@ def main(path, lr, bs, device):
                 for i, val in enumerate(normal_err):
                     cost[7 + i] += val / (len(train_loaders[0]) * num_agents)
             logging.info(f'all_grads: {len(all_grads)}, {len(all_grads[0])}, {len(all_grads[0][0])}')
+            
             # 2. Aggregate gradients using communication matrix W
-            aggregated_grads = {s: [] for s in range(3)}
-            for s in range(3):
-                num_agents = len(all_grads[s])
-                num_params = len(all_grads[s][0])  # Parameters per agent
+            aggregated_grads = []  # Shape: [num_agents][3 tasks][num_params]
+            for s in range(3):  # For each task
+                # Stack gradients for task s across all agents
+                grads_s = torch.stack([all_grads[i][s] for i in range(num_agents)])  # [num_agents, num_params]
                 
-                for param_idx in range(num_params):
-                    # Stack gradients for this parameter across agents: [num_agents, ...]
-                    agent_grads = [all_grads[s][agent_id][param_idx] for agent_id in range(num_agents)]
-                    param_stack = torch.stack(agent_grads, dim=0)
-                    
-                    # Aggregate: W_tensor [num_agents, num_agents] @ param_stack [num_agents, ...]
-                    aggregated = torch.einsum('ij,j...->i...', W_tensor, param_stack)
-                    aggregated_grads[s].append(aggregated)
+                # Decentralized aggregation
+                aggregated_s = torch.matmul(W_tensor, grads_s)  # [num_agents, num_params]
+                aggregated_grads.append(aggregated_s)
+            
+            # Transpose to [num_agents][3 tasks][num_params]
+            aggregated_grads = list(zip(*aggregated_grads))
             logging.info(f'aggregated_grads: {len(aggregated_grads)}, {len(aggregated_grads[0])}, {len(aggregated_grads[0][0])}')
-            # 3. Compute λ and update parameters for each agent
-            for agent_id in range(num_agents):
-                model = models[agent_id]
-                weight_method = weight_methods[agent_id]
-                params = list(model.parameters())
-                
-                # Prepare agent-specific aggregated gradients
-                agent_grads = []
-                for s in range(3):
-                    agent_grads.append([
-                        aggregated_grads[s][p_idx][agent_id] 
-                        for p_idx in range(len(params))
-                    ])
-                
-                # Assign aggregated gradients to model
-                with torch.no_grad():
-                    for p_idx, param in enumerate(model.parameters()):
-                        param.grad = sum(agent_grads[s][p_idx] for s in range(3))
-                
-                # Compute λ using PMGD with actual losses
-                _, extra = weight_method.backward(
-                    losses=losses,
-                    shared_parameters=model.shared_parameters(),
-                    task_specific_parameters=model.task_specific_parameters(),
-                    last_shared_parameters=model.last_shared_parameters(),
-                    representation=features
-                )
-                logging.info('complete Computing λ')
-                weights = extra['weights']
-                
-                # Apply weight smoothing
-                if prev_weights[agent_id] is not None:
-                    weights = (1 - alpha) * weights + alpha * prev_weights[agent_id]
-                prev_weights[agent_id] = weights.detach().clone()
 
-                # 4. Compute directional gradient (weighted sum)
-                d_t = []
-                for p_idx in range(len(model.parameters())):
-                    weighted_grad = torch.zeros_like(model.parameters()[p_idx])
-                    for s in range(3):
-                        weighted_grad += weights[s] * agent_grads[s][p_idx]
-                    d_t.append(weighted_grad)
+            # 3. Compute λ and update parameters for each agent
+            all_final_weights = []
+            for agent_id in range(num_agents):
+                # Get aggregated gradients for this agent
+                agent_grads = [aggregated_grads[agent_id][s] for s in range(3)]
                 
-                # 5. Update parameters (consensus + gradient step)
+                # Compute optimal weights λ*
+                pmgd = weight_methods[agent_id].method
+                pmgd.sol, _ = pmgd.solver.find_min_norm_element(
+                    [g.unsqueeze(0) for g in agent_grads]  # Input as list of gradients
+                )
+                pmgd.sol = pmgd.sol * 3  # Normalize for 3 tasks
+                
+                # EMA update
+                if pmgd.prev_weights is None:
+                    pmgd.prev_weights = torch.from_numpy(pmgd.sol).float().to(device)
+                current_weights = torch.from_numpy(pmgd.sol).float().to(device)
+                final_weights = pmgd.alpha * pmgd.prev_weights + (1 - pmgd.alpha) * current_weights
+                pmgd.prev_weights = current_weights
+
+                all_final_weights.append(final_weights)
+                logging.info(f'complete Computing λ: {final_weights}')
+                
+            # 4. Compute ALL weighted gradients
+            all_weighted_grads = []
+            for agent_id in range(num_agents):
+                weighted_grad = sum(
+                    w * g for w, g in zip(
+                        all_final_weights[agent_id],
+                        aggregated_grads[agent_id]
+                    )
+                )
+                all_weighted_grads.append(weighted_grad)            
+            # 5. Parameter updates (with aggregation)
+            all_current_params = [
+                torch.cat([p.data.view(-1) for p in model.parameters()])
+                for model in models
+            ]
+
+            for agent_id, model in enumerate(models):
+                ptr = 0
                 with torch.no_grad():
-                    all_params = torch.stack([torch.stack([p.detach() for p in m.parameters()]) for m in models])
-                    consensus_params = torch.einsum('ij,j...->i...', W_tensor, all_params)
-                    for p_idx, param in enumerate(model.parameters()):
-                        param.data = consensus_params[agent_id, p_idx] - lr * d_t[p_idx] 
+                    # x^i = ∑ W_ij x^j - η d^i
+                    aggregated_params = torch.matmul(W_tensor[agent_id], torch.stack(all_current_params))
+                    for param in model.parameters():
+                        num_param = param.numel()
+                        param.data = (
+                            aggregated_params[ptr:ptr+num_param].view(param.shape) - 
+                            args.lr * all_weighted_grads[agent_id][ptr:ptr+num_param].view(param.shape))
+                        ptr += num_param
 
         # Update training metrics
         avg_cost[epoch, :12] = cost[:12]
@@ -405,12 +405,6 @@ def main(path, lr, bs, device):
 
 if __name__ == "__main__":
     parser = ArgumentParser("NYUv2", parents=[common_parser])
-    parser.add_argument("--batch_size", type=int, default=2,
-                      help="Batch Size")    
-    parser.add_argument("--num_agents", type=int, default=5,
-                      help="Number of collaborative agents")
-    parser.add_argument("--network_sparsity", type=float, default=0.5,
-                      help="Sparsity level of communication network (0-1)")
     parser.set_defaults(
         data_path=os.path.join(os.getcwd(), "dataset_test"),
         lr=1e-4,
@@ -423,6 +417,12 @@ if __name__ == "__main__":
         choices=["segnet", "mtan"],
         help="model type",
     )
+    parser.add_argument("--batch_size", type=int, default=2,
+                      help="Batch Size")    
+    parser.add_argument("--num_agents", type=int, default=5,
+                      help="Number of collaborative agents")
+    parser.add_argument("--network_sparsity", type=float, default=0.5,
+                      help="Sparsity level of communication network (0-1)")    
     parser.add_argument(
         "--apply-augmentation", type=str2bool, default=True, help="data augmentations"
     )
