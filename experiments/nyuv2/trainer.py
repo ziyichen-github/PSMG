@@ -408,7 +408,6 @@ if __name__ == "__main__":
     parser.set_defaults(
         data_path=os.path.join(os.getcwd(), "dataset"),
         lr=1e-4,
-        n_epochs=200,
     )
     parser.add_argument(
         "--model",
@@ -417,6 +416,8 @@ if __name__ == "__main__":
         choices=["segnet", "mtan"],
         help="model type",
     )
+    parser.add_argument("--n_epochs", type=int, default=200,
+                      help="number of  epochs")  
     parser.add_argument("--batch_size", type=int, default=2,
                       help="Batch Size")    
     parser.add_argument("--num_agents", type=int, default=5,
