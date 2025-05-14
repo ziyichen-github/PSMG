@@ -1,5 +1,5 @@
 matplotlib>=3.2.1
-numpy>=1.18.2
+numpy==1.26.3
 cvxpy
 tqdm>=4.45.0
 pandas

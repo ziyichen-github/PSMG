@@ -6,7 +6,7 @@ method=pmgd
 seed=42
 gamma=0.001
 n_epochs=200
-batch_size=16
+batch_size=2
 num_agents=5
 network_sparsity=0.6
 
