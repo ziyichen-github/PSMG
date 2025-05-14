@@ -23,6 +23,20 @@ sudo apt-get install unzip -y
 unzip dataset/nyuv2.zip -d dataset/nyuv2
 rm dataset/nyuv2.zip
 
-nano run.sh
 
-tail -f "trainlogs/log_pmgd-gamma0.001-42-batch2-agent5-sparsity0.6.log"
+# # modify before run
+# nano run.sh
+
+# nano trainer.py
+# torch.set_num_threads(12)  # Use 12 cores per experiment (4 experiments × 12 = 48 cores)
+# torch.set_float32_matmul_precision('high')  # Faster matrix operations
+# os.environ['OMP_NUM_THREADS'] = '12'  # OpenMP threads
+# os.environ['MKL_NUM_THREADS'] = '12'  # Intel MKL threads
+
+# DataLoader(
+#     num_workers=8,        # Optimal for 48-core machines
+#     persistent_workers=True  # Maintains workers between epochs
+# )
+
+# # check log file
+# tail -f "trainlogs/log_pmgd-gamma0.001-42-batch2-agent5-sparsity0.6.log"

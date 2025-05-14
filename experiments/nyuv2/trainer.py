@@ -144,7 +144,8 @@ def main(path, lr, bs, device):
         cost = np.zeros(24, dtype=np.float32)
         train_conf_mat = ConfMatrix(models[0].segnet.class_nb)
 
-        for batches in zip(*train_loaders):
+        for j, batches in enumerate(zip(*train_loaders)):
+        # for batches in zip(*train_loaders):
             # 1. Compute losses and gradients for each agent
             all_grads = []  # Shape: [num_agents][3 tasks][num_params]
             current_params = [None] * num_agents
@@ -257,6 +258,11 @@ def main(path, lr, bs, device):
                             args.lr * all_weighted_grads[agent_id][ptr:ptr+num_param].view(param.shape))
                         ptr += num_param
 
+            epoch_iter.set_description(
+                f"[{epoch+1}  {j+1}/{len(batches)}] semantic loss: {losses[0].item():.3f}, "
+                f"depth loss: {losses[1].item():.3f}, "
+                f"normal loss: {losses[2].item():.3f}"
+            )
         # Update training metrics
         avg_cost[epoch, :12] = cost[:12]
         avg_cost[epoch, 1:3] = train_conf_mat.get_metrics()
