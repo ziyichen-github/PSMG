@@ -16,7 +16,6 @@ import wandb
 from argparse import ArgumentParser
 import numpy as np
 import torch
-torch.set_num_threads(1)
 import time
 import datetime
 import torch.nn.functional as F
@@ -98,7 +97,8 @@ def main(path, lr, bs, device):
             batch_size=bs,
             shuffle=True,
             generator=torch.Generator().manual_seed(args.seed + i),
-            num_workers=0
+            num_workers=4,
+            pin_memory=True
         )
         for i, subset in enumerate(train_subsets)
     ]
@@ -114,7 +114,7 @@ def main(path, lr, bs, device):
     )
 
     test_loaders = [
-        DataLoader(subset, batch_size=bs, shuffle=False, num_workers=0)
+        DataLoader(subset, batch_size=bs, shuffle=False, num_workers=4, pin_memory=True)
         for subset in test_subsets
     ]
     # Initialize models and optimizers for each agent
@@ -444,7 +444,7 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project,
                    entity=args.wandb_entity, config=args)
 
-    device = "cpu"
+    device = get_device()
     main(path=args.data_path, lr=args.lr, bs=args.batch_size, device=device)
 
     if wandb.run is not None:
